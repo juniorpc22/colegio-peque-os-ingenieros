@@ -5,8 +5,11 @@ include '../../config/db.php';
 if (!isset($_GET['dni']) || empty($_GET['dni'])) { header("Location: index.php"); exit; }
 $dni = $conn->real_escape_string($_GET['dni']);
 
-// 1. DATOS DEL ALUMNO
-$sql_alumno = "SELECT * FROM alumnos WHERE dni = '$dni'";
+// 1. DATOS DEL ALUMNO (AQUÍ ESTÁ LA MAGIA DEL JOIN PARA TRAER EL NOMBRE DEL SALÓN)
+$sql_alumno = "SELECT a.*, gs.nivel, gs.grado, gs.seccion 
+               FROM alumnos a 
+               LEFT JOIN grados_secciones gs ON a.id_grado_seccion = gs.id 
+               WHERE a.dni = '$dni'";
 $res_alumno = $conn->query($sql_alumno);
 
 if ($res_alumno->num_rows == 0) { header("Location: index.php?error=notfound"); exit; }
@@ -14,7 +17,10 @@ $alumno = $res_alumno->fetch_assoc();
 $id_alumno = $alumno['id'];
 $foto = !empty($alumno['foto']) ? $alumno['foto'] : 'default.jpg';
 
-// 2. ESTADÍSTICAS ASISTENCIA
+// ARMAMOS EL NOMBRE DEL SALÓN
+$nombre_salon = $alumno['nivel'] ? $alumno['nivel'] . " - " . $alumno['grado'] . "° " . $alumno['seccion'] : 'Sin asignar';
+
+// 2. ESTADÍSTICAS ASISTENCIA (Puerta Principal)
 $sql_stats = "SELECT estado, COUNT(*) as total FROM asistencias WHERE id_alumno = '$id_alumno' GROUP BY estado";
 $res_stats = $conn->query($sql_stats);
 $stats = ['PUNTUAL' => 0, 'TARDE' => 0, 'JUSTIFICADO' => 0, 'FALTA' => 0];
@@ -28,9 +34,18 @@ while($row = $res_stats->fetch_assoc()) {
 $sql_noticias = "SELECT * FROM noticias ORDER BY fecha_creacion DESC LIMIT 10";
 $res_noticias = $conn->query($sql_noticias);
 
-// 4. HISTORIAL RECIENTE (Últimos 10 días)
+// 4. HISTORIAL RECIENTE EN PUERTA (Últimos 10 días)
 $sql_historial = "SELECT * FROM asistencias WHERE id_alumno = '$id_alumno' ORDER BY fecha DESC LIMIT 10";
 $res_historial = $conn->query($sql_historial);
+
+// 5. NUEVO: HISTORIAL RECIENTE EN AULA (Módulo del Profesor)
+$sql_aula = "SELECT ac.fecha, ac.estado, c.nombre_curso 
+             FROM asistencia_cursos ac
+             JOIN cursos c ON ac.id_curso = c.id
+             WHERE ac.id_alumno = '$id_alumno'
+             ORDER BY ac.fecha DESC, c.nombre_curso ASC
+             LIMIT 10";
+$res_aula = $conn->query($sql_aula);
 ?>
 
 <!DOCTYPE html>
@@ -71,7 +86,7 @@ $res_historial = $conn->query($sql_historial);
             width: 130px; height: 130px; object-fit: cover;
             border-radius: 50%; border: 6px solid white;
             box-shadow: 0 8px 20px rgba(0,0,0,0.15);
-            margin-top: -70px; /* Efecto flotante */
+            margin-top: -70px; 
             margin-bottom: 15px;
         }
 
@@ -101,8 +116,8 @@ $res_historial = $conn->query($sql_historial);
             font-size: 0.85rem; font-weight: 600;
             display: flex; align-items: center;
         }
-        .time-entry { color: #198754; } /* Verde */
-        .time-exit { color: #dc3545; }  /* Rojo */
+        .time-entry { color: #198754; } 
+        .time-exit { color: #dc3545; }  
         .time-pending { color: #aaa; font-style: italic; }
 
         /* NOTICIAS */
@@ -142,7 +157,7 @@ $res_historial = $conn->query($sql_historial);
     </div>
 </div>
 
-<div class="container">
+<div class="container pb-5">
     <div class="row">
         
         <div class="col-lg-4">
@@ -153,8 +168,7 @@ $res_historial = $conn->query($sql_historial);
                 <p class="text-secondary small mb-2"><?php echo $alumno['apellidos']; ?></p>
                 
                 <div class="d-flex justify-content-center gap-2 mb-4">
-                    <span class="badge bg-light text-dark border"><?php echo $alumno['grado']."° ".$alumno['seccion']; ?></span>
-                    <span class="badge bg-primary">Primaria</span>
+                    <span class="badge bg-light text-dark border">Salón: <?php echo $nombre_salon; ?></span> <span class="badge bg-primary">Alumno</span>
                 </div>
                 
                 <div class="row g-2 text-center border-top pt-3">
@@ -174,7 +188,7 @@ $res_historial = $conn->query($sql_historial);
             </div>
 
             <div class="card card-content">
-                <div class="card-header-custom"><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Resumen Gráfico</div>
+                <div class="card-header-custom"><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Resumen General (Puerta)</div>
                 <div class="card-body d-flex justify-content-center">
                     <?php if($total_asistencias > 0): ?>
                         <div style="width: 220px; height: 220px;">
@@ -200,7 +214,6 @@ $res_historial = $conn->query($sql_historial);
                                     $clase = ($news['tipo'] == 'alerta') ? 'type-alerta' : (($news['tipo'] == 'evento') ? 'type-evento' : '');
                                     $icono = ($news['tipo'] == 'alerta') ? 'bi-exclamation-triangle-fill text-danger' : 'bi-info-circle-fill text-primary';
                                     
-                                    // Datos para el modal (seguro contra comillas)
                                     $titulo_safe = addslashes($news['titulo']);
                                     $desc_safe   = addslashes($news['descripcion']);
                                     $img_safe    = !empty($news['imagen']) ? "../../assets/uploads/noticias/".$news['imagen'] : "";
@@ -227,9 +240,9 @@ $res_historial = $conn->query($sql_historial);
                 </div>
 
                 <div class="col-md-12">
-                    <div class="card card-content">
+                    <div class="card card-content border-top border-success border-4">
                         <div class="card-header-custom d-flex justify-content-between align-items-center">
-                            <span><i class="bi bi-calendar-check-fill me-2 text-success"></i>Últimos Registros</span>
+                            <span><i class="bi bi-door-open-fill me-2 text-success"></i>Asistencia en Puerta Principal</span>
                             <small class="text-muted fw-normal text-lowercase">últimos 10 días</small>
                         </div>
                         <div class="card-body p-0">
@@ -273,11 +286,56 @@ $res_historial = $conn->query($sql_historial);
                                     </div>
                                 <?php endwhile; ?>
                             <?php else: ?>
-                                <div class="text-center py-5 text-muted small">No hay registros de asistencia recientes.</div>
+                                <div class="text-center py-4 text-muted small">No hay registros de asistencia en puerta recientes.</div>
                             <?php endif; ?>
                         </div>
                     </div>
                 </div>
+
+                <div class="col-md-12 mt-2">
+                    <div class="card card-content border-top border-info border-4">
+                        <div class="card-header-custom d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-journal-check me-2 text-info"></i>Asistencia en Aula (Por Materia)</span>
+                            <small class="text-muted fw-normal text-lowercase">últimas clases</small>
+                        </div>
+                        <div class="card-body p-0">
+                            <?php if($res_aula && $res_aula->num_rows > 0): ?>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th class="ps-4">Fecha</th>
+                                                <th>Materia</th>
+                                                <th class="text-center">Reporte del Profesor</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php while($aula = $res_aula->fetch_assoc()): ?>
+                                                <?php 
+                                                    $fecha_aula = date("d/m/Y", strtotime($aula['fecha']));
+                                                    $badge_aula = "<span class='badge bg-secondary'>Desconocido</span>";
+                                                    
+                                                    if($aula['estado'] == 'Asistió') $badge_aula = "<span class='badge bg-success'><i class='bi bi-check-circle me-1'></i>Asistió</span>";
+                                                    if($aula['estado'] == 'Tardanza') $badge_aula = "<span class='badge bg-warning text-dark'><i class='bi bi-clock-history me-1'></i>Tardanza</span>";
+                                                    if($aula['estado'] == 'Falta') $badge_aula = "<span class='badge bg-danger'><i class='bi bi-x-circle me-1'></i>Falta</span>";
+                                                    if($aula['estado'] == 'Justificado') $badge_aula = "<span class='badge bg-info text-dark'><i class='bi bi-file-medical me-1'></i>Justificado</span>";
+                                                ?>
+                                                <tr>
+                                                    <td class="ps-4 text-muted small fw-bold"><i class="bi bi-calendar-event me-1"></i><?php echo $fecha_aula; ?></td>
+                                                    <td class="fw-bold text-primary"><?php echo $aula['nombre_curso']; ?></td>
+                                                    <td class="text-center"><?php echo $badge_aula; ?></td>
+                                                </tr>
+                                            <?php endwhile; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <?php else: ?>
+                                <div class="text-center py-4 text-muted small">Los profesores aún no han registrado asistencias por materia.</div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -294,8 +352,7 @@ $res_historial = $conn->query($sql_historial);
                 <p class="text-muted small mb-3"><i class="bi bi-clock"></i> <span id="verFecha"></span></p>
                 
                 <div id="verImagenContenedor" class="mb-3 text-center d-none" style="background: #f8f9fa; border-radius: 10px; overflow: hidden;">
-                    <img id="verImagen" src="" 
-                         style="max-height: 250px; width: auto; max-width: 100%; object-fit: contain; display: inline-block;">
+                    <img id="verImagen" src="" style="max-height: 250px; width: auto; max-width: 100%; object-fit: contain; display: inline-block;">
                 </div>
 
                 <div class="p-2">
@@ -334,7 +391,6 @@ $res_historial = $conn->query($sql_historial);
     });
     <?php endif; ?>
 
-    // FUNCIÓN PARA ABRIR MODAL
     function verNoticia(titulo, desc, fecha, imagen) {
         document.getElementById('verTitulo').innerText = titulo;
         document.getElementById('verDesc').innerText = desc;

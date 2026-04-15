@@ -16,7 +16,7 @@ function enviarWhatsApp($numero, $mensaje) {
     // 1. Limpiar el número (quitar guiones, espacios, paréntesis)
     $numero = preg_replace('/[^0-9]/', '', $numero);
     
-    // 2. Agregar código de país 51 (Perú) si no lo tiene
+    // 2. Agregar código de país 51 (PerúD) si no lo tiene
     // Si tiene 9 dígitos (ej: 999888777), le ponemos el 51 delante.
     if (strlen($numero) == 9) { 
         $numero = "51" . $numero; 
@@ -47,4 +47,3 @@ function enviarWhatsApp($numero, $mensaje) {
     
     return $result;
 }
-?>

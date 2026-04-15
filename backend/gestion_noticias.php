@@ -1,76 +1,62 @@
 <?php
 // backend/gestion_noticias.php
+session_start();
 include '../config/db.php';
 
-// RUTA DONDE SE GUARDAN LAS FOTOS
-$target_dir = "../assets/uploads/noticias/";
-
-// --- ACCIÓN: ELIMINAR ---
-if (isset($_GET['borrar_id'])) {
-    $id = intval($_GET['borrar_id']);
-    
-    // Primero borramos la foto física si existe
-    $sql_foto = "SELECT imagen FROM noticias WHERE id = $id";
-    $res = $conn->query($sql_foto);
-    if ($row = $res->fetch_assoc()) {
-        if (!empty($row['imagen']) && file_exists($target_dir . $row['imagen'])) {
-            unlink($target_dir . $row['imagen']); // Borrar archivo
-        }
-    }
-
-    $sql = "DELETE FROM noticias WHERE id = $id";
-    if($conn->query($sql)) {
-        header("Location: ../frontend/admin/noticias.php?msg=borrado");
-    } else {
-        header("Location: ../frontend/admin/noticias.php?error=db");
-    }
-    exit;
+// Solo Admins y Directores pueden publicar noticias
+if (!isset($_SESSION['rol']) || !in_array($_SESSION['rol'], ['SuperAdmin', 'Admin', 'Director'])) {
+    die("Acceso no autorizado");
 }
 
-// --- ACCIONES POST (GUARDAR O EDITAR) ---
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['accion']) && $_POST['accion'] == 'crear') {
     
-    $titulo = $conn->real_escape_string($_POST['titulo']);
-    $desc   = $conn->real_escape_string($_POST['descripcion']);
-    $tipo   = $_POST['tipo'];
-    $id     = !empty($_POST['id']) ? intval($_POST['id']) : null;
-    $nombre_foto = null;
+    $titulo = $conn->real_escape_string(trim($_POST['titulo']));
+    $tipo = $conn->real_escape_string($_POST['tipo']);
+    $descripcion = $conn->real_escape_string(trim($_POST['descripcion']));
+    $nombre_foto = "";
 
-    // 1. PROCESAR IMAGEN (SI SE SUBIÓ UNA)
+    // Subir imagen si es que adjuntaron una
     if (isset($_FILES['imagen']) && $_FILES['imagen']['error'] == 0) {
-        $ext = pathinfo($_FILES['imagen']['name'], PATHINFO_EXTENSION);
-        // Generar nombre único: noticia_TIMESTAMP.jpg
-        $nombre_foto = "noticia_" . time() . "." . $ext;
+        $directorio = "../assets/uploads/noticias/";
+        if (!file_exists($directorio)) { mkdir($directorio, 0777, true); }
         
-        if (move_uploaded_file($_FILES['imagen']['tmp_name'], $target_dir . $nombre_foto)) {
-            // Subida exitosa
-        } else {
-            $nombre_foto = null; // Falló la subida
+        $ext = pathinfo($_FILES['imagen']['name'], PATHINFO_EXTENSION);
+        // Renombramos la imagen con la fecha actual para evitar nombres duplicados
+        $nombre_archivo = "noticia_" . time() . "." . $ext; 
+        
+        if(move_uploaded_file($_FILES['imagen']['tmp_name'], $directorio . $nombre_archivo)){
+            $nombre_foto = $nombre_archivo;
         }
     }
 
-    // 2. ACTUALIZAR (EDITAR)
-    if ($id) {
-        $sql = "UPDATE noticias SET titulo='$titulo', descripcion='$desc', tipo='$tipo'";
-        // Solo actualizamos la foto si el usuario subió una nueva
-        if ($nombre_foto) {
-            $sql .= ", imagen='$nombre_foto'";
-        }
-        $sql .= " WHERE id=$id";
-        $msg = "actualizado";
-    } 
-    // 3. INSERTAR (NUEVO)
-    else {
-        // Si no subió foto, insertamos NULL
-        $foto_sql = $nombre_foto ? "'$nombre_foto'" : "NULL";
-        $sql = "INSERT INTO noticias (titulo, descripcion, tipo, imagen) VALUES ('$titulo', '$desc', '$tipo', $foto_sql)";
-        $msg = "guardado";
-    }
-
-    if($conn->query($sql)) {
-        header("Location: ../frontend/admin/noticias.php?msg=$msg");
+    $sql = "INSERT INTO noticias (titulo, descripcion, tipo, imagen) VALUES ('$titulo', '$descripcion', '$tipo', '$nombre_foto')";
+    
+    if ($conn->query($sql) === TRUE) {
+        header("Location: ../frontend/admin/dashboard.php?msg=noticia_ok");
     } else {
         echo "Error: " . $conn->error;
     }
+    exit();
 }
+
+// Borrar Noticia
+if (isset($_GET['accion']) && $_GET['accion'] == 'borrar' && isset($_GET['id'])) {
+    $id = intval($_GET['id']);
+    
+    // Opcional: Borrar la imagen física del servidor si existe
+    $res = $conn->query("SELECT imagen FROM noticias WHERE id = $id");
+    if($res->num_rows > 0) {
+        $img = $res->fetch_assoc()['imagen'];
+        if(!empty($img) && file_exists("../assets/uploads/noticias/".$img)) {
+            unlink("../assets/uploads/noticias/".$img);
+        }
+    }
+
+    $conn->query("DELETE FROM noticias WHERE id = $id");
+    header("Location: ../frontend/admin/dashboard.php?msg=noticia_borrada");
+    exit();
+}
+
+header("Location: ../frontend/admin/dashboard.php");
+exit();
 ?>

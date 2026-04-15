@@ -1,5 +1,17 @@
 <?php
 // frontend/admin/reporte_diario.php
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// --- GUARDIÁN DE SEGURIDAD ---
+if (!isset($_SESSION['rol']) || !in_array($_SESSION['rol'], ['SuperAdmin', 'Admin', 'Director'])) {
+    header("Location: dashboard.php?error=acceso_denegado");
+    exit(); 
+}
+// -----------------------------
+
 include_once '../../config/auth.php'; // Seguridad por roles
 include '../../config/db.php';
 include '../includes/header_admin.php';
@@ -11,11 +23,11 @@ $fecha_hoy = date('Y-m-d');
 $fecha_filtro = isset($_GET['fecha']) ? $_GET['fecha'] : $fecha_hoy;
 $estado_filtro = isset($_GET['estado']) ? $_GET['estado'] : ''; // '' = Todos
 
-// --- 2. CONSULTA MAESTRA ACTUALIZADA (CON GRADOS Y SECCIONES) ---
-// Unimos Alumnos con Grados_Secciones y luego con Asistencias
+// --- 2. CONSULTA MAESTRA ACTUALIZADA (¡AQUÍ ESTÁ LA CORRECCIÓN SQL!) ---
+// Cambiamos "a.hora" por "a.hora_llegada" y agregamos "a.hora_salida"
 $sql = "SELECT al.id as id_alumno, al.nombres, al.apellidos, 
                gs.nivel, gs.grado as num_grado, gs.seccion, 
-               a.id as id_asistencia, a.hora as hora_llegada, a.estado, a.observacion
+               a.id as id_asistencia, a.hora_llegada, a.hora_salida, a.estado, a.observacion
         FROM alumnos al 
         INNER JOIN grados_secciones gs ON al.id_grado_seccion = gs.id
         LEFT JOIN asistencias a ON al.id = a.id_alumno AND a.fecha = '$fecha_filtro' 
@@ -43,7 +55,7 @@ if($resultado) {
             }
         }
         
-        // Aplicar Filtro Visual (Tu lógica original)
+        // Aplicar Filtro Visual
         if ($estado_filtro != '' && $estado_filtro != 'TODOS') {
             if ($estado_filtro == 'ASISTIERON' && $row['estado_real'] == 'PENDIENTE') continue;
             if ($estado_filtro == 'PENDIENTE' && $row['estado_real'] != 'PENDIENTE') continue;
@@ -100,6 +112,7 @@ if($resultado) {
                             <th class="ps-4">Alumno</th>
                             <th class="text-center">Grado / Nivel</th>
                             <th class="text-center">Hora Ingreso</th>
+                            <th class="text-center">Hora Salida</th>
                             <th class="text-center">Estado</th>
                             <th class="text-center">Acción</th>
                         </tr>
@@ -117,7 +130,8 @@ if($resultado) {
                                     if($estado == 'JUSTIFICADO') { $clase_badge = "bg-info text-dark"; $icono = "bi-file-medical-fill"; }
                                     if($estado == 'FALTA')   { $clase_badge = "bg-danger"; $icono = "bi-x-circle-fill"; }
 
-                                    $ingreso = ($row['hora_llegada']) ? date("h:i A", strtotime($row['hora_llegada'])) : '<span class="text-muted small">-</span>';
+                                    $ingreso = (!empty($row['hora_llegada'])) ? date("h:i A", strtotime($row['hora_llegada'])) : '<span class="text-muted small">-</span>';
+                                    $salida = (!empty($row['hora_salida'])) ? date("h:i A", strtotime($row['hora_salida'])) : '<span class="text-muted small">-</span>';
                                 ?>
                                 <tr>
                                     <td class="ps-4">
@@ -129,7 +143,8 @@ if($resultado) {
                                         </span>
                                     </td>
                                     
-                                    <td class="text-center font-monospace text-primary fw-bold"><?php echo $ingreso; ?></td>
+                                    <td class="text-center font-monospace text-success fw-bold"><?php echo $ingreso; ?></td>
+                                    <td class="text-center font-monospace text-danger fw-bold"><?php echo $salida; ?></td>
                                     
                                     <td class="text-center">
                                         <span class="badge <?php echo $clase_badge; ?>">
@@ -139,14 +154,14 @@ if($resultado) {
                                     
                                     <td class="text-center">
                                         <button class="btn btn-sm btn-outline-secondary border-0" 
-                                                onclick="abrirJustificar('<?php echo $row['id_alumno']; ?>', '<?php echo $row['nombres'] . ' ' . $row['apellidos']; ?>')">
+                                                onclick="abrirJustificar('<?php echo $row['id_alumno']; ?>', '<?php echo addslashes($row['nombres'] . ' ' . $row['apellidos']); ?>')">
                                             <i class="bi bi-pencil-square"></i>
                                         </button>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr><td colspan="5" class="text-center py-5 text-muted">No se encontraron registros.</td></tr>
+                            <tr><td colspan="6" class="text-center py-5 text-muted">No se encontraron registros.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -194,6 +209,8 @@ if($resultado) {
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
 <script>
     function abrirJustificar(id, nombre) {
         document.getElementById('id_alumno').value = id;
@@ -201,3 +218,5 @@ if($resultado) {
         new bootstrap.Modal(document.getElementById('modalJustificar')).show();
     }
 </script>
+</body>
+</html>

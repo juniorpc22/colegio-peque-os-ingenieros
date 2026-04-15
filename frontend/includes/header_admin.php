@@ -87,9 +87,10 @@ $rol_actual = isset($_SESSION['rol']) ? $_SESSION['rol'] : '';
                 <li class="nav-item d-none d-lg-block text-white opacity-50 mx-2">|</li>
 
                 <li class="nav-item d-flex align-items-center gap-2">
-                    <span class="text-white small d-none d-md-block">
-                        Hola, <strong><?php echo isset($_SESSION['nombre_usuario']) ? $_SESSION['nombre_usuario'] : 'Usuario'; ?></strong>
-                    </span>
+                    <a href="../admin/perfil.php" class="text-white text-decoration-none small d-none d-md-flex align-items-center me-2 px-2 py-1 rounded hover-perfil">
+                        <i class="bi bi-person-circle fs-5 me-2"></i>
+                        <span>Hola, <strong><?php echo isset($_SESSION['nombre_usuario']) ? $_SESSION['nombre_usuario'] : 'Usuario'; ?></strong></span>
+                    </a>
                     <a class="btn btn-danger btn-sm fw-bold shadow-sm" href="../../backend/logout.php">
                         <i class="bi bi-box-arrow-right"></i> Salir
                     </a>
@@ -98,3 +99,9 @@ $rol_actual = isset($_SESSION['rol']) ? $_SESSION['rol'] : '';
         </div>
     </div>
 </nav>
+
+<style>
+    /* Efecto hover sutil para el botón de perfil */
+    .hover-perfil { transition: background 0.2s; }
+    .hover-perfil:hover { background: rgba(255,255,255,0.1); }
+</style>

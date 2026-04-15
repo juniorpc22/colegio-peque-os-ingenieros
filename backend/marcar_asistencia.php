@@ -1,19 +1,35 @@
 <?php
 // backend/marcar_asistencia.php
+error_reporting(0); 
+ini_set('display_errors', 0);
 header('Content-Type: application/json');
-include '../config/db.php'; // Tu conexión actualizada con Charset UTF-8
+
+include '../config/db.php';
+include 'whatsapp_helper.php'; 
 date_default_timezone_set('America/Lima');
 
-// Configuración de Green-API (Mantén tus credenciales actuales aquí)
-$idInstance = "TU_ID_INSTANCE"; 
-$apiTokenInstance = "TU_API_TOKEN";
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $codigo_barra = $_POST['codigo_barra'];
+    $codigo_barra = isset($_POST['codigo_barra']) ? $_POST['codigo_barra'] : '';
     $fecha_actual = date('Y-m-d');
-    $hora_actual = date('H:i:s');
+    $hora_actual = date('H:i:s'); // Ejemplo interno: "08:10:00"
 
-    // 1. CONSULTA NORMALIZADA: Unimos alumnos con la nueva tabla grados_secciones
+    // ==========================================
+    // ⚙️ REGLAS DE NEGOCIO (HORARIOS DEL COLEGIO)
+    // ==========================================
+    $inicio_ingreso  = "07:00:00"; // Desde a qué hora pueden entrar
+    $limite_puntual  = "08:15:00"; // Hasta a qué hora es puntual
+    $fin_ingreso     = "09:30:00"; // Después de esta hora, ya no se acepta ingreso
+    
+    $inicio_salida   = "12:30:00"; // Desde a qué hora pueden salir
+    $fin_salida      = "15:00:00"; // A qué hora se apaga el escáner
+    // ==========================================
+
+    if(empty($codigo_barra)) {
+        echo json_encode(["status" => "error", "mensaje" => "Código vacío"]);
+        exit;
+    }
+
+    // 1. CONSULTA DEL ALUMNO
     $sql_alumno = "SELECT a.*, gs.grado as num_grado, gs.seccion, gs.nivel 
                    FROM alumnos a
                    INNER JOIN grados_secciones gs ON a.id_grado_seccion = gs.id
@@ -28,81 +44,107 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id_alumno = $alumno['id'];
         $nombre_completo = $alumno['nombres'] . " " . $alumno['apellidos'];
         $telefono = $alumno['telefono_apoderado'];
-        $foto = $alumno['foto'];
-        
-        // Formateamos el grado para la interfaz del Auxiliar
+        $foto = !empty($alumno['foto']) ? $alumno['foto'] : 'default.jpg';
         $grado_texto = $alumno['num_grado'] . "° " . $alumno['seccion'] . " - " . $alumno['nivel'];
 
-        // 2. VALIDACIÓN: ¿Ya marcó hoy?
-        $sql_check = "SELECT id FROM asistencias WHERE id_alumno = ? AND fecha = ?";
+        // 2. VERIFICAR QUÉ HA HECHO EL ALUMNO HOY
+        $sql_check = "SELECT id, hora_salida FROM asistencias WHERE id_alumno = ? AND fecha = ?";
         $stmt_check = $conn->prepare($sql_check);
         $stmt_check->bind_param("is", $id_alumno, $fecha_actual);
         $stmt_check->execute();
         $res_check = $stmt_check->get_result();
 
+        // ---------------------------------------------------------
+        // ESCENARIO A: EL ALUMNO YA MARCÓ SU INGRESO HOY
+        // ---------------------------------------------------------
         if ($res_check->num_rows > 0) {
-            echo json_encode([
-                "status" => "warning",
-                "msg" => "Ya registró asistencia hoy",
-                "nombre" => $nombre_completo,
-                "grado" => $grado_texto,
-                "foto" => $foto
-            ]);
+            $registro_existente = $res_check->fetch_assoc();
+            
+            // Si le falta marcar la salida...
+            if (empty($registro_existente['hora_salida'])) {
+                
+                // REGLAS DE TIEMPO PARA LA SALIDA
+                if ($hora_actual < $inicio_salida) {
+                    echo json_encode(["status" => "error", "mensaje" => "Aún es horario de clases. La salida inicia a las " . date("h:i A", strtotime($inicio_salida))]);
+                    exit;
+                }
+                if ($hora_actual > $fin_salida) {
+                    echo json_encode(["status" => "error", "mensaje" => "El horario de salida ya terminó."]);
+                    exit;
+                }
+
+                // Si está en el horario correcto, registramos la salida
+                $sql_update = "UPDATE asistencias SET hora_salida = ? WHERE id = ?";
+                $stmt_upd = $conn->prepare($sql_update);
+                $stmt_upd->bind_param("si", $hora_actual, $registro_existente['id']);
+                $stmt_upd->execute();
+
+                // ENVÍO DE WHATSAPP SALIDA
+                if (!empty($telefono)) {
+                    $mensaje = "🏫 *SISTEMA PEQUEÑOS INGENIEROS*\n\n";
+                    $mensaje .= "Hola, se registró un movimiento de: *" . $nombre_completo . "*\n";
+                    $mensaje .= "Tipo: *SALIDA*\n";
+                    $mensaje .= "Hora: *" . date("h:i A", strtotime($hora_actual)) . "*\n";
+                    $mensaje .= "Salón: " . $grado_texto;
+                    enviarWhatsApp($telefono, $mensaje);
+                }
+
+                echo json_encode([
+                    "status" => "success",
+                    "mensaje" => "SALIDA registrada: " . date("h:i A", strtotime($hora_actual)),
+                    "alumno" => ["nombres" => $alumno['nombres'], "apellidos" => $alumno['apellidos'], "salon" => $grado_texto, "foto" => $foto],
+                    "asistencia" => ["estado" => "SALIDA"]
+                ]);
+
+            } else {
+                echo json_encode(["status" => "error", "mensaje" => "El estudiante ya completó su ciclo de asistencia (Ingreso y Salida) hoy."]);
+            }
             exit;
         }
 
-        // 3. LÓGICA DE ESTADO (PUNTUAL / TARDE)
-        // Suponiendo entrada 08:00 AM
-        $hora_limite = "08:00:00";
-        $estado = ($hora_actual <= $hora_limite) ? 'PUNTUAL' : 'TARDE';
+        // ---------------------------------------------------------
+        // ESCENARIO B: EL ALUMNO RECIÉN LLEGA AL COLEGIO (INGRESO)
+        // ---------------------------------------------------------
+        
+        // REGLAS DE TIEMPO PARA EL INGRESO
+        if ($hora_actual < $inicio_ingreso) {
+            echo json_encode(["status" => "error", "mensaje" => "Es muy temprano. El ingreso inicia a las " . date("h:i A", strtotime($inicio_ingreso))]);
+            exit;
+        }
+        if ($hora_actual > $fin_ingreso) {
+            echo json_encode(["status" => "error", "mensaje" => "El horario de ingreso ya cerró. Diríjase a la dirección."]);
+            exit;
+        }
 
-        // 4. INSERTAR EN LA BASE DE DATOS
-        $sql_ins = "INSERT INTO asistencias (id_alumno, fecha, hora, estado) VALUES (?, ?, ?, ?)";
+        // Si pasó los filtros de tiempo, vemos si llegó puntual o tarde
+        $estado = ($hora_actual <= $limite_puntual) ? 'PUNTUAL' : 'TARDE';
+
+        // INSERTAR INGRESO
+        $sql_ins = "INSERT INTO asistencias (id_alumno, fecha, hora_llegada, estado) VALUES (?, ?, ?, ?)";
         $stmt_ins = $conn->prepare($sql_ins);
         $stmt_ins->bind_param("isss", $id_alumno, $fecha_actual, $hora_actual, $estado);
         
         if ($stmt_ins->execute()) {
-            
-            // 5. ENVÍO DE WHATSAPP VÍA GREEN-API
-            $mensaje = "SISTEMA PEQUEÑOS INGENIEROS\n";
-            $mensaje .= "Hola, se registró la asistencia de: " . $nombre_completo . "\n";
-            $mensaje .= "Estado: " . $estado . "\n";
-            $mensaje .= "Hora: " . $hora_actual . "\n";
-            $mensaje .= "Grado: " . $grado_texto;
+            // ENVÍO DE WHATSAPP INGRESO
+            if (!empty($telefono)) {
+                $mensaje = "🏫 *SISTEMA PEQUEÑOS INGENIEROS*\n\n";
+                $mensaje .= "Hola, se registró un movimiento de: *" . $nombre_completo . "*\n";
+                $mensaje .= "Tipo: *" . $estado . "*\n";
+                $mensaje .= "Hora: *" . date("h:i A", strtotime($hora_actual)) . "*\n";
+                $mensaje .= "Salón: " . $grado_texto;
+                enviarWhatsApp($telefono, $mensaje);
+            }
 
-            $url = "https://api.green-api.com/waInstance$idInstance/sendMessage/$apiTokenInstance";
-            $data = [
-                "chatId" => "51" . $telefono . "@c.us",
-                "message" => $mensaje
-            ];
-
-            $options = [
-                'http' => [
-                    'method'  => 'POST',
-                    'header'  => 'Content-Type: application/json',
-                    'content' => json_encode($data),
-                    'timeout' => 5 // Para evitar que el sistema se cuelgue si WhatsApp demora
-                ]
-            ];
-
-            $context  = stream_context_create($options);
-            @file_get_contents($url, false, $context); // Envío silencioso
-
-            // 6. RESPUESTA EXITOSA AL FRONTEND (FETCH)
             echo json_encode([
                 "status" => "success",
-                "nombre" => $nombre_completo,
-                "grado" => $grado_texto,
-                "foto" => $foto,
-                "tipo" => $estado,
-                "hora" => $hora_actual
+                "mensaje" => "INGRESO registrado ($estado): " . date("h:i A", strtotime($hora_actual)),
+                "alumno" => ["nombres" => $alumno['nombres'], "apellidos" => $alumno['apellidos'], "salon" => $grado_texto, "foto" => $foto],
+                "asistencia" => ["estado" => $estado]
             ]);
         } else {
-            echo json_encode(["status" => "error", "msg" => "Error al guardar en DB"]);
+            echo json_encode(["status" => "error", "mensaje" => "Error DB: " . $conn->error]);
         }
-
     } else {
-        echo json_encode(["status" => "error", "msg" => "Alumno no registrado en el sistema"]);
+        echo json_encode(["status" => "error", "mensaje" => "Estudiante no encontrado."]);
     }
 }
-?>

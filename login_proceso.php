@@ -20,27 +20,33 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     if ($row = $result->fetch_assoc()) {
         
-        // --- BYPASS DE EMERGENCIA ---
-        // Te deja pasar si la clave es 123456 (texto plano) O si el Hash coincide
-        if ($pass === '123456' || password_verify($pass, $row['password'])) {
+        // --- SEGURIDAD REAL: SOLO SE ACEPTAN CLAVES ENCRIPTADAS ---
+        // Aquí quitamos el "|| $pass === '123456'". 
+        // Ahora el sistema OBLIGA a que la clave coincida con el Hash seguro.
+        if (password_verify($pass, $row['password'])) {
             
-            // IMPORTANTE: Guardamos 'usuario_id' para que 'gestion_usuarios.php' te reconozca
             $_SESSION['usuario_id'] = $row['id'];
             $_SESSION['nombre_usuario'] = $row['usuario'];
             $_SESSION['rol'] = $row['nombre_rol'];
 
-            // Redirección según el rol
-            if ($row['nombre_rol'] === 'SuperAdmin' || $row['nombre_rol'] === 'Director') {
+            // Enrutamiento Inteligente (La alternativa al selector de rol)
+            if ($row['nombre_rol'] === 'SuperAdmin' || $row['nombre_rol'] === 'Director' || $row['nombre_rol'] === 'Admin') {
                 header("Location: frontend/admin/dashboard.php");
+            } else if ($row['nombre_rol'] === 'Profesor') {
+                header("Location: frontend/profesor/mis_cursos.php"); // Futura vista
             } else {
+                // Si es Auxiliar u otro
                 header("Location: frontend/asistencia/escanear.php");
             }
             exit(); 
+
         } else {
+            // Clave incorrecta
             header("Location: index.php?error=1");
             exit();
         }
     } else {
+        // Usuario no existe
         header("Location: index.php?error=1");
         exit();
     }
